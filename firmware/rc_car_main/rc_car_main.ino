@@ -46,7 +46,7 @@ int maxSpeed = 150;
 // --- SDL FLOOR CALIBRATION VARIABLES ---
 // Adjust these during Phase 4 to map the mathematical vectors to physical reality.
 // If you tell the car to spin 90 degrees and it only spins 45, increase SPIN_MS_PER_DEGREE.
-const int SPIN_MS_PER_DEGREE = 15;  // Milliseconds of motor run-time per 1 degree of calculated angle
+const int SPIN_MS_PER_DEGREE = 8;  // Milliseconds of motor run-time per 1 degree of calculated angle
 // If a magnitude of 100 drives too far, decrease DRIVE_MS_PER_UNIT.
 const int DRIVE_MS_PER_UNIT = 30;   // Milliseconds of motor run-time per 1 unit of calculated magnitude
 
@@ -161,38 +161,34 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
           return;
         }
 
-        // --- PHASE 1: CALCULUS VECTOR MATH ---
-        // Calculate Magnitude using Pythagorean theorem: M = sqrt(x^2 + y^2)
-        // This represents the total distance the rover needs to drive.
+        // --- PHASE 1: MATH 215 UNIT CIRCLE MATH ---
         float magnitude = sqrt(x*x + y*y);
         
-        // Calculate Angle using inverse tangent: theta = atan2(x, y)
-        // We use atan2 instead of atan because it automatically handles all 4 quadrants and prevents divide-by-zero if y is 0.
-        // We multiply by (180.0 / PI) to convert from Radians to Degrees.
-        float angle = atan2(x, y) * 180.0 / PI; 
+        // Because the car physically starts facing the +X axis (0 degrees),
+        // we use standard calculus to find the exact target angle.
+        float target_angle = atan2(y, x) * 180.0 / PI; 
 
         // --- PHASE 2: CONVERT MATH TO TIMERS ---
-        // Translate the abstract mathematical values into physical milliseconds for the motors.
-        currentSpinDuration = abs(angle) * SPIN_MS_PER_DEGREE;
+        currentSpinDuration = abs((int)target_angle) * SPIN_MS_PER_DEGREE;
         currentDriveDuration = magnitude * DRIVE_MS_PER_UNIT;
 
         // --- PHASE 3: TRIGGER THE STATE MACHINE ---
-        Serial.printf("Vector Received. Mag: %.1f, Angle: %.1f deg\n", magnitude, angle);
+        Serial.printf("Vector Received. Mag: %.1f, Angle: %.1f deg\n", magnitude, target_angle);
         
-        // If an angle exists, queue the SPINNING state first. 
-        // A positive angle means X was positive (Right). A negative angle means X was negative (Left).
         if (currentSpinDuration > 0) {
           currentState = SPINNING;
-          if (angle > 0) turnRight();
-          else turnLeft();
+          // From the +X axis (0 deg):
+          // Positive angles are counter-clockwise (Left turn)
+          // Negative angles are clockwise (Right turn)
+          if (target_angle > 0) turnLeft();
+          else turnRight();
         } 
-        // If angle is 0 (pure Y vector), skip spinning and go straight to DRIVING
         else {
           currentState = DRIVING;
           driveForward();
         }
         
-        stateStartTime = millis(); // Start the stopwatch for the current state
+        stateStartTime = millis();
       }
     }
     
