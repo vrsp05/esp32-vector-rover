@@ -14,42 +14,56 @@ WebSocketsServer webSocket = WebSocketsServer(82);
 
 // ===========================
 // Hardcoded Factory Credentials
-// Change this number for each car before flashing! (e.g., BYU-Car-2, BYU-Car-3)
+// Change this number for each car before flashing! (e.g., BYU-Car-2)
 // ===========================
 const char *carSSID = "general182";
 
 // ===========================
 // Wi-Fi Channel Selection
 // Use ONLY channels 1, 6, or 11 to prevent cars from lagging each other.
-// Distribute evenly: e.g., Cars 1-3 on Ch 1, Cars 4-6 on Ch 6, Cars 7-10 on Ch 11.
 // ===========================
 const int wifiChannel = 1;
 
 // ===========================
-// Motor Driver Blueprint
+// Motor Driver Blueprint & Pins
 // ===========================
 struct MOTOR_PINS {
   int pinIN1;
   int pinIN2;
 };
 
-// ===========================
-// Motor Pin Definitions
-// ===========================
-
-// Right Motor Channel (M1 & M2) -> Pins 13 & 12
+// Right Motor (M1 & M2) -> Pins 13 & 12 | Left Motor (M3 & M4) -> Pins 15 & 14
 MOTOR_PINS rightMotor = {13, 12}; 
-
-// Left Motor Channel (M3 & M4) -> Pins 15 & 14
 MOTOR_PINS leftMotor = {15, 14};
 
 // ===========================
-// Software Speed Governor
+// Speed Governor & Vector Calibration
 // ===========================
-int maxSpeed = 150; // Scale from 0 (Stop) to 255 (Full Throttle). 150 is a safe indoor speed.
+// maxSpeed sets the raw PWM duty cycle (0-255). 
+// Since we are not doing proportional speed anymore, this is the fixed speed the car uses to drive and spin.
+int maxSpeed = 150; 
+
+// --- SDL FLOOR CALIBRATION VARIABLES ---
+// Adjust these during Phase 4 to map the mathematical vectors to physical reality.
+// If you tell the car to spin 90 degrees and it only spins 45, increase SPIN_MS_PER_DEGREE.
+const int SPIN_MS_PER_DEGREE = 8;  // Milliseconds of motor run-time per 1 degree of calculated angle
+// If a magnitude of 100 drives too far, decrease DRIVE_MS_PER_UNIT.
+const int DRIVE_MS_PER_UNIT = 30;   // Milliseconds of motor run-time per 1 unit of calculated magnitude
 
 // ===========================
-// Movement Functions (PWM Upgraded)
+// Non-Blocking State Machine Variables
+// ===========================
+// We use a state machine with millis() instead of delay() so the ESP32 can continuously
+// listen to the WebSocket. If we used delay(5000) to drive, the Emergency Stop button would be ignored.
+enum MoveState { IDLE, SPINNING, DRIVING };
+MoveState currentState = IDLE;
+
+unsigned long stateStartTime = 0; // Records the exact millisecond a movement started
+int currentSpinDuration = 0;      // How long the current spin phase should last
+int currentDriveDuration = 0;     // How long the current drive phase should last
+
+// ===========================
+// Movement Functions (Fixed Speed)
 // ===========================
 void stopCar() {
   ledcWrite(rightMotor.pinIN1, 0);
@@ -60,23 +74,11 @@ void stopCar() {
 }
 
 void driveForward() {
-  // Right side (M1 & M2) pushes forward
   ledcWrite(rightMotor.pinIN1, maxSpeed);
   ledcWrite(rightMotor.pinIN2, 0);
-  
-  // Left side (M3 & M4) pushes forward
   ledcWrite(leftMotor.pinIN1, maxSpeed);
   ledcWrite(leftMotor.pinIN2, 0);
-  
-  Serial.println("Car: FORWARD (Normal)");
-}
-
-void driveBackward() {
-  ledcWrite(rightMotor.pinIN1, 0);
-  ledcWrite(rightMotor.pinIN2, maxSpeed);
-  ledcWrite(leftMotor.pinIN1, 0);
-  ledcWrite(leftMotor.pinIN2, maxSpeed);
-  Serial.println("Car: BACKWARD");
+  Serial.println("Car: DRIVING FORWARD");
 }
 
 void turnRight() {
@@ -84,7 +86,7 @@ void turnRight() {
   ledcWrite(rightMotor.pinIN2, maxSpeed);
   ledcWrite(leftMotor.pinIN1, maxSpeed);
   ledcWrite(leftMotor.pinIN2, 0);
-  Serial.println("Car: RIGHT");
+  Serial.println("Car: SPINNING RIGHT");
 }
 
 void turnLeft() {
@@ -92,7 +94,7 @@ void turnLeft() {
   ledcWrite(rightMotor.pinIN2, 0);
   ledcWrite(leftMotor.pinIN1, 0);
   ledcWrite(leftMotor.pinIN2, maxSpeed);
-  Serial.println("Car: LEFT");
+  Serial.println("Car: SPINNING LEFT");
 }
 
 void startCameraServer();
@@ -105,78 +107,98 @@ int activeClient = -1; // -1 means the car is currently available
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
   
-  // 1. Handle Disconnections
   if (type == WStype_DISCONNECTED) {
     if (activeClient == num) {
       Serial.println("Driver disconnected. Car is now available.");
-      activeClient = -1; // Free up the lock for the next student
-      stopCar();         // SAFETY FEATURE: Hit the brakes if Wi-Fi drops!
+      activeClient = -1; 
+      currentState = IDLE;
+      stopCar(); // SAFETY FEATURE: Hit the brakes if Wi-Fi drops
     }
   } 
-  
-  // 2. Handle New Connections
   else if (type == WStype_CONNECTED) {
     if (activeClient == -1) {
-      activeClient = num; // Claim the lock
+      activeClient = num;
       Serial.printf("Phone [%u] Connected! Car locked.\n", num);
     } else {
-      Serial.printf("Phone [%u] rejected. Car is already in use.\n", num);
-      // Send an alert string to the rejected phone before dropping them
       webSocket.sendTXT(num, "ERROR: Car is currently in use by another student.");
-      webSocket.disconnect(num); // Kick the intruder off the server
+      webSocket.disconnect(num);
     }
   } 
-  
-  // 3. Handle Driving Commands
   else if (type == WStype_TEXT) {
-    // SECURITY CHECK: Ignore commands from anyone who isn't the active driver
     if (num != activeClient) return; 
 
     String command = String((char*)payload);
-    Serial.print("Phone sent command: ");
-    Serial.println(command);
-
     int sepIndex = command.indexOf(':');
     
     // ==========================================
-    // TYPE 1: SLIDER COMMANDS (Contains a ':')
+    // PARSE INCOMING DATA
     // ==========================================
     if (sepIndex > 0) { 
       String cmdName = command.substring(0, sepIndex);
-      int cmdValue = command.substring(sepIndex + 1).toInt();
       
-      if (cmdName == "led") {
-        int safeValue = map(cmdValue, 0, 255, 0, 40); 
-        ledcWrite(4, safeValue); 
+      // 1. Camera Setting Sliders
+      if (cmdName == "led" || cmdName == "bright" || cmdName == "contrast") {
+        int cmdValue = command.substring(sepIndex + 1).toInt();
+        if (cmdName == "led") {
+          ledcWrite(4, map(cmdValue, 0, 255, 0, 40)); 
+        } else if (cmdName == "bright") {
+          esp_camera_sensor_get()->set_brightness(esp_camera_sensor_get(), cmdValue);
+        } else if (cmdName == "contrast") {
+          esp_camera_sensor_get()->set_contrast(esp_camera_sensor_get(), cmdValue);
+        }
       }
-      else if (cmdName == "bright") {
-        sensor_t * s = esp_camera_sensor_get();
-        s->set_brightness(s, cmdValue);
-      }
-      else if (cmdName == "contrast") {
-        sensor_t * s = esp_camera_sensor_get();
-        s->set_contrast(s, cmdValue);
+      
+      // 2. Vector Math Payload (Format: "vec:X,Y")
+      else if (cmdName == "vec") {
+        int commaIndex = command.indexOf(',', sepIndex + 1);
+        int x = command.substring(sepIndex + 1, commaIndex).toInt();
+        int y = command.substring(commaIndex + 1).toInt();
+
+        // Handle Zero Vector (Origin)
+        if (x == 0 && y == 0) {
+          currentState = IDLE;
+          stopCar();
+          return;
+        }
+
+        // --- PHASE 1: MATH 215 UNIT CIRCLE MATH ---
+        float magnitude = sqrt(x*x + y*y);
+        
+        // Because the car physically starts facing the +X axis (0 degrees),
+        // we use standard calculus to find the exact target angle.
+        float target_angle = atan2(y, x) * 180.0 / PI; 
+
+        // --- PHASE 2: CONVERT MATH TO TIMERS ---
+        currentSpinDuration = abs((int)target_angle) * SPIN_MS_PER_DEGREE;
+        currentDriveDuration = magnitude * DRIVE_MS_PER_UNIT;
+
+        // --- PHASE 3: TRIGGER THE STATE MACHINE ---
+        Serial.printf("Vector Received. Mag: %.1f, Angle: %.1f deg\n", magnitude, target_angle);
+        
+        if (currentSpinDuration > 0) {
+          currentState = SPINNING;
+          // From the +X axis (0 deg):
+          // Positive angles are counter-clockwise (Left turn)
+          // Negative angles are clockwise (Right turn)
+          if (target_angle > 0) turnLeft();
+          else turnRight();
+        } 
+        else {
+          currentState = DRIVING;
+          driveForward();
+        }
+        
+        stateStartTime = millis();
       }
     }
+    
     // ==========================================
-    // TYPE 2: BUTTON COMMANDS (No ':')
+    // EMERGENCY STOP BUTTON
     // ==========================================
-    else { 
-      if (command == "forward") {
-        driveForward();
-      }
-      else if (command == "backward") {
-        driveBackward();
-      }
-      else if (command == "left") {
-        turnLeft();
-      }
-      else if (command == "right") {
-        turnRight();
-      }
-      else if (command == "stop") {
-        stopCar();
-      }
+    else if (command == "stop") {
+      Serial.println("EMERGENCY STOP TRIGGERED!");
+      currentState = IDLE; // Break out of any active Spin or Drive state
+      stopCar();
     }
   }
 }
@@ -186,6 +208,7 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
 
+  // --- CAMERA CONFIGURATION ---
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -206,66 +229,51 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   
-  // --- STABILITY TUNE ---
-  // 1. Clock Speed: Dropped from 20MHz to 10MHz to prevent hardware crashing
+  // Stability tune for older hardware
   config.xclk_freq_hz = 10000000; 
-  
-  // 2. Resolution: Bumped to CIF (400x296) for better quality without lagging the D-Pad
   config.frame_size = FRAMESIZE_CIF; 
-  
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  
-  // 3. JPEG Quality: Lowered to 12 for a sharper image (lower number = less compression)
   config.jpeg_quality = 12; 
   config.fb_count = 2;
 
-  // Fallback if the chip has bad memory
   if (!psramFound()) {
     config.frame_size = FRAMESIZE_QVGA;
     config.fb_location = CAMERA_FB_IN_DRAM;
     config.fb_count = 1;
   }
 
-  // camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("Camera init failed with error 0x%x", err);
     return;
   }
 
+  // --- MOTOR CONFIGURATION ---
   // Initialize motor pins as PWM speed outputs (1000 Hz, 8-bit resolution)
   ledcAttach(rightMotor.pinIN1, 1000, 8);
   ledcAttach(rightMotor.pinIN2, 1000, 8);
   ledcAttach(leftMotor.pinIN1, 1000, 8);
   ledcAttach(leftMotor.pinIN2, 1000, 8);
   
-  // Ensure the car starts in a parked state
-  stopCar();
+  stopCar(); // Ensure the car starts in a parked state
 
   sensor_t *s = esp_camera_sensor_get();
+  s->set_exposure_ctrl(s, 1); 
+  s->set_aec2(s, 1);          
+  s->set_whitebal(s, 1);      
+  s->set_awb_gain(s, 1);      
+  s->set_wb_mode(s, 0);       
 
-  // --- THE AUTO-PILOT TUNE ---
-  s->set_exposure_ctrl(s, 1); // Auto-Exposure ON (adapts to shadows/sunlight)
-  s->set_aec2(s, 1);          // Advanced Auto-Exposure DSP ON
-  s->set_whitebal(s, 1);      // Auto-White Balance ON (removes weird color tints)
-  s->set_awb_gain(s, 1);      // Auto-White Balance Gain ON
-  s->set_wb_mode(s, 0);       // Set White Balance Mode to standard Auto
-
-// Setup LED FLash if LED pin is defined in camera_pins.h
 #if defined(LED_GPIO_NUM)
   setupLedFlash();
 #endif
 
-  // --- Open Access Point (No Password) ---
-  // Using NULL creates an open network. wifiChannel locks the broadcast frequency.
+  // --- NETWORK CONFIGURATION ---
   WiFi.softAP(carSSID, NULL, wifiChannel);
-  Serial.println("");
-  Serial.println("Car Wi-Fi Network Started!");
-
-  // --- BOOT FLASH ---
-  // Blink the LED 3 times quickly at a safe brightness to signal the car is ready
+  
+  // Boot sequence: Flash the onboard LED 3 times
   for(int i = 0; i < 3; i++) {
     ledcWrite(4, 25); 
     delay(150);
@@ -275,20 +283,48 @@ void setup() {
 
   startCameraServer();
 
-  // Initialize the Flash LED (Pin 4) for smooth brightness control (ESP32 Core v3.x)
-  ledcAttach(4, 1000, 8); // Attach Pin 4, 1000 Hz, 8-bit (0-255)
-  ledcWrite(4, 0);        // Start with the headlights OFF
+  ledcAttach(4, 1000, 8); 
+  ledcWrite(4, 0);        
   
-  // Initialize the webSocket
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
 
-  Serial.print("Camera Ready! Use 'http://");
-  Serial.print(WiFi.softAPIP());
-  Serial.println("' to connect");
+  Serial.println("Camera & Motors Ready!");
 }
 
 void loop() {
-  webSocket.loop(); // Constantly check for new commands
-  delay(1);         // A tiny pause to keep the brain stable
+  // Constantly listen to the WebSocket for Emergency Stops or new vectors
+  webSocket.loop(); 
+  
+  // ==========================================
+  // NON-BLOCKING MOVEMENT STATE MACHINE
+  // ==========================================
+  // This block acts like a supervisor checking a stopwatch. It looks at the current time (millis),
+  // compares it to when the movement started, and transitions to the next phase if time is up.
+  
+  if (currentState == SPINNING) {
+    // If the elapsed time is greater than the required spin duration...
+    if (millis() - stateStartTime >= currentSpinDuration) {
+      stopCar(); // ...stop the spin.
+      delay(50); // Tiny physical pause to let hardware momentum settle before driving
+      
+      // Transition to Phase 2: Driving
+      if (currentDriveDuration > 0) {
+        currentState = DRIVING;
+        driveForward();
+        stateStartTime = millis(); // Reset the stopwatch for the drive phase
+      } else {
+        currentState = IDLE; // Vector was pure X, no Y distance
+      }
+    }
+  } 
+  else if (currentState == DRIVING) {
+    // If the elapsed time is greater than the required drive duration...
+    if (millis() - stateStartTime >= currentDriveDuration) {
+      stopCar(); // ...arrived at vector destination!
+      currentState = IDLE;
+    }
+  }
+
+  delay(1); // Tiny pause to keep the ESP32 background tasks stable
 }
