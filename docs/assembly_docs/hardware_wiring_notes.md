@@ -1,6 +1,6 @@
 # Hardware & Wiring Notes
 
-If you are building the car using the custom STEM Camp PCB, this guide explains exactly how the electronics connect and the number one physical mistake to avoid when building your drivetrain.
+If you are building the car using the custom PCB, this guide explains exactly how the electronics connect and the number one physical mistake to avoid when building your drivetrain.
 
 ## Wiring Guide
 

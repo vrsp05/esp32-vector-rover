@@ -1,6 +1,6 @@
-# BYU STEM Camp RC Car: Programming Guide
+# Programming Guide
 
-Welcome to the final step of your RC Car build. Right now, your car is just plastic, motors, and wires. In this guide, we are going to give it a brain.
+Welcome to the final step of your ESP32 Vector Rover build. Right now, your car is just plastic, motors, and wires. In this guide, we are going to give it a brain.
 
 The tiny computer on your car (called the ESP32-CAM) is incredibly special. It does not just hold code, it actually creates its very own Wi-Fi network! 
 
@@ -17,14 +17,14 @@ Let's get your car programmed and ready to race!
 
 Before we put the brain into the car, we need to give it a unique identity. If all the cars in the room have the exact same Wi-Fi name, your phone will not know which one is yours, and you might accidentally connect to your friend's car.
 
-We also need to pick a Wi-Fi **Channel**. Think of a channel like a lane on an invisible highway. If every single car in the camp tries to drive in the exact same lane, there will be a massive traffic jam and your live video may freeze. 
+We also need to pick a Wi-Fi **Channel**. Think of a channel like a lane on an invisible highway. If every single car tries to drive in the exact same lane, there will be a massive traffic jam and your live video may freeze. 
 
 Here is exactly how to change your car's name and pick your highway lane in the code:
 
 1. **Open the Code:** Open the Arduino IDE on your computer. Click **File > Open**, and open the main code file located inside your `firmware/rc_car_main` folder called `rc_car_main.ino`. 
 2. **Find the Wi-Fi Name:** Scroll down near the top of the code until you see a line that sets the network name. It will look something like this:
-   `const char *carSSID = "BYU-Car-0";`
-3. **Change the Name:** Delete the words inside the quotation marks and type in your own custom name (for example: `"BYU-Car-1"` or `"Lightning"`). *Warning: Make sure you do not delete the quotation marks!*
+   `const char *carSSID = "general182";`
+3. **Change the Name:** Delete the words inside the quotation marks and type in your own custom name (for example: `"Car-1"` or `"Lightning"`). *Warning: Make sure you do not delete the quotation marks!*
 4. **Find the Channel:** Right below your name, look for the line that sets the Wi-Fi channel. It will look something like this:
    `const int wifiChannel = 1;`
 5. **Pick Your Lane:** Change that number to **1**, **6**, or **11**. These three numbers are the best "fast lanes" for Wi-Fi. *(Pro-Tip: Ask other next to you which number they picked, and try to choose a different one so your cars do not share the same lane.)*
@@ -48,7 +48,7 @@ Now that the brain is programmed, it is time to cut the cord and let the car wak
 1. **Unplug the Cable:** Carefully unplug the USB cable from the car's brain. You don't need the computer anymore. Now plug the ESP32 back into the car.
 2. **Turn on the Batteries:** Make sure you have 4 AA batteries in the holder, and flip the main power switch on the car to the **ON** position. 
 3. **Find Your Network:** Open the Wi-Fi settings on your smartphone (or a tablet).
-4. **Connect to Your Car:** Look at the list of Wi-Fi networks and tap on the custom name you created in Step 1 (like "BYU-Car-1"). 
+4. **Connect to Your Car:** Look at the list of Wi-Fi networks and tap on the custom name you created in Step 1 (like "Car-1"). 
 
 *Note: Your car's network does not have a password, so it will connect instantly. Your phone might pop up a warning saying "No Internet Connection." Do not worry—that is exactly what is supposed to happen because your car is not a normal Wi-Fi router.*
 
