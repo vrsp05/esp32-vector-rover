@@ -14,7 +14,7 @@ WebSocketsServer webSocket = WebSocketsServer(82);
 
 // ===========================
 // Hardcoded Factory Credentials
-// Change this number for each car before flashing! (e.g., BYU-Car-2)
+// Change this name for each car before flashing! (e.g., Car-2)
 // ===========================
 const char *carSSID = "general182";
 
