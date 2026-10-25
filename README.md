@@ -7,3 +7,5 @@ This project transforms a standard ESP32-CAM RC car into a vector-driven embedde
 Instead of using a traditional D-Pad or joystick, the rover is controlled via a custom mobile web dashboard that accepts strict coordinate vectors ($X, Y$). The onboard C++ firmware applies standard calculus—using the Pythagorean theorem for magnitude and `atan2(y, x)` for angle calculation—to translate abstract mathematical vectors into a physical "Spin-then-Drive" execution. 
 
 To ensure safe operation, the firmware relies on a non-blocking state machine. This allows the ESP32-CAM to execute complex physical vector maneuvers while simultaneously broadcasting a live, low-latency video feed and listening for network "Emergency Stop" commands over a standalone Wi-Fi WebSocket connection.
+
+**YouTube Link:** https://youtu.be/qFMIzQq9JWY
